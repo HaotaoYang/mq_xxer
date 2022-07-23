@@ -1,0 +1,20 @@
+{
+    application,
+    mq_xxer,
+    [
+        {description, "An OTP application"},
+        {vsn, "1.0.0"},
+        {registered, []},
+        {mod, {mq_xxer_app, []}},
+        {applications, [
+            kernel,
+            stdlib,
+            amqp_client
+        ]},
+        {env,[]},
+        {modules, []},
+        {maintainers, []},
+        {licenses, []},
+        {links, []}
+    ]
+}.
