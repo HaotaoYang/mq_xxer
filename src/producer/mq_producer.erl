@@ -8,9 +8,9 @@
 -export([
     start_link/1,
     get_name/1,
-    send/1,
-    state/1,
-    stop_publisher/0
+    % send/1,
+    % state/1,
+    stop_producers/1
 ]).
 
 %% gen_server callbacks
@@ -23,9 +23,9 @@
     code_change/3
 ]).
 
--type publish_msg() :: {Exchange :: binary(), RoutingKey :: binary(), Payload :: binary()} |
-                        {#'basic.publish'{}, #amqp_msg{}}.
--type result() :: ack | nack | closing | blocked.
+% -type publish_msg() :: {Exchange :: binary(), RoutingKey :: binary(), Payload :: binary()} |
+%                         {#'basic.publish'{}, #amqp_msg{}}.
+% -type result() :: ack | nack | closing | blocked.
 
 -record(state, {
     channel,
@@ -53,32 +53,28 @@ start_link(N) when is_integer(N) ->
 get_name(N) ->
     erlang:list_to_atom(lists:concat([?MODULE, "_", N])).
 
--spec send( Msg :: publish_msg()) -> Result when
-    Result :: result().
-send(Msg) ->
-   send(whereis(get_publisher()), Msg).
+% -spec send( Msg :: publish_msg()) -> Result when
+%     Result :: result().
+% send(Msg) ->
+%    send(whereis(get_publisher()), Msg).
+%
+% get_publisher() ->
+%     N = rand:uniform(?PRODUCER_NUM),
+%     get_name(N).
+% 
+% -spec send(Pid, Msg :: publish_msg()) -> Result when
+%     Pid :: pid(),
+%     Result :: result().
+% send(Pid, Msg) when
+%     is_pid(Pid)
+%          ->
+%     gen_server:call(Pid, {send, Msg}, infinity).
+% 
+% -spec state(Pid :: pid()) -> #state{}.
+% state(Pid) ->
+%     sys:get_state(Pid).
 
--spec send(Pid, Msg :: publish_msg()) -> Result when
-    Pid :: pid(),
-    Result :: result().
-send(Pid, Msg) when
-    is_pid(Pid)
-         ->
-    gen_server:call(Pid, {send, Msg}, infinity).
-
--spec state(Pid :: pid()) -> #state{}.
-state(Pid) ->
-    sys:get_state(Pid).
-
-stop_publisher() ->
-    [ok = stop(N) || N <- lists:seq(1, ?PRODUCER_NUM)],
-    ok.
-
-get_publisher() ->
-    N = rand:uniform(?PRODUCER_NUM),
-    get_name(N).
-
-stop(N) ->
+stop_producers(N) ->
     gen_server:call(get_name(N), stop).
 
 %%%===================================================================
@@ -123,33 +119,33 @@ init([_PName]) ->
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_call({send, _}, _From, #state{channel = undefined} = NewState) ->
-    {reply, closing, NewState};
-handle_call({send, {Exchange, RoutingKey, Payload}},  From,
-    State) ->
-        BasicPublish = #'basic.publish'{
-        mandatory = true,
-        exchange = Exchange,
-        routing_key = RoutingKey},
-        AmqpMsg =  #amqp_msg{props = #'P_basic'{
-        content_type = <<"application/octet-stream">>,
-        timestamp = erlang:system_time(1000),
-        delivery_mode = 2},
-        payload = Payload
-       },
-    handle_call({send, {BasicPublish, AmqpMsg}}, From ,State);
-handle_call({send, {#'basic.publish'{} = Publish, #amqp_msg{props = Props} = AmqpMsg}}, From,
-    #state{channel = Channel, seqno = SeqNo, request = Req} = State) ->
-    NewSeq = SeqNo + 1,
-    NewProps = Props#'P_basic'{message_id = erlang:integer_to_binary(NewSeq)},
-    case catch amqp_channel:call(Channel, Publish, AmqpMsg#amqp_msg{props = NewProps}) of
-        ok ->
-            NewReq = dict:store(NewSeq, From, Req),
-            {noreply, State#state{seqno = NewSeq, request = NewReq}};
-        %% blocked or closing
-        BlockedOrClosing ->
-            {reply, BlockedOrClosing, State}
-    end;
+% handle_call({send, _}, _From, #state{channel = undefined} = NewState) ->
+%     {reply, closing, NewState};
+% handle_call({send, {Exchange, RoutingKey, Payload}},  From,
+%     State) ->
+%         BasicPublish = #'basic.publish'{
+%         mandatory = true,
+%         exchange = Exchange,
+%         routing_key = RoutingKey},
+%         AmqpMsg =  #amqp_msg{props = #'P_basic'{
+%         content_type = <<"application/octet-stream">>,
+%         timestamp = erlang:system_time(1000),
+%         delivery_mode = 2},
+%         payload = Payload
+%        },
+%     handle_call({send, {BasicPublish, AmqpMsg}}, From ,State);
+% handle_call({send, {#'basic.publish'{} = Publish, #amqp_msg{props = Props} = AmqpMsg}}, From,
+%     #state{channel = Channel, seqno = SeqNo, request = Req} = State) ->
+%     NewSeq = SeqNo + 1,
+%     NewProps = Props#'P_basic'{message_id = erlang:integer_to_binary(NewSeq)},
+%     case catch amqp_channel:call(Channel, Publish, AmqpMsg#amqp_msg{props = NewProps}) of
+%         ok ->
+%             NewReq = dict:store(NewSeq, From, Req),
+%             {noreply, State#state{seqno = NewSeq, request = NewReq}};
+%         %% blocked or closing
+%         BlockedOrClosing ->
+%             {reply, BlockedOrClosing, State}
+%     end;
 
 handle_call(stop, _, State) ->
     {stop, normal, ok, State};
@@ -199,17 +195,17 @@ handle_info(init_channel, State) ->
             {noreply, NewState}
     end;
 
-%% @doc when no queue to binding this routingkey will callback
-handle_info({#'basic.return'{} = Return, #amqp_msg{props = #'P_basic'{message_id = SeqNo
-    }} = _AmqpMsg},
-    #state{request = Req} = State) ->
-    ?LOG_ERROR("pub_pid = ~p, callback_return = ~p~n", [self(), Return]),
-    NewR = do_response(erlang:binary_to_integer(SeqNo), nack, Req),
-    {noreply, State#state{request = NewR}};
-handle_info(#'basic.ack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
-    {noreply, State#state{request = do_response({SeqNo, Multiple}, ack, Req)}};
-handle_info(#'basic.nack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
-    {noreply, State#state{request = do_response({SeqNo, Multiple}, nack, Req)}};
+% %% @doc when no queue to binding this routingkey will callback
+% handle_info({#'basic.return'{} = Return, #amqp_msg{props = #'P_basic'{message_id = SeqNo
+%     }} = _AmqpMsg},
+%     #state{request = Req} = State) ->
+%     ?LOG_ERROR("pub_pid = ~p, callback_return = ~p~n", [self(), Return]),
+%     NewR = do_response(erlang:binary_to_integer(SeqNo), nack, Req),
+%     {noreply, State#state{request = NewR}};
+% handle_info(#'basic.ack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
+%     {noreply, State#state{request = do_response({SeqNo, Multiple}, ack, Req)}};
+% handle_info(#'basic.nack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
+%     {noreply, State#state{request = do_response({SeqNo, Multiple}, nack, Req)}};
 %% @doc publish message to no exchange will receive down from channel
 handle_info({'DOWN', _, process, QPid, {shutdown,{server_initiated_close, 404, _}} = Reason},
     #state{request = Req} = State) ->
@@ -230,30 +226,30 @@ channel_down(_, From, Acc) ->
     gen_server:reply(From, nack),
     Acc.
 
-do_response({SeqNo, true}, Reply, Req) ->
-    %% 小于SeqNo的消息都已经确认
-    {NewReq, _, _} = dict:fold(fun do_multiple_response/3, {dict:new(), SeqNo, Reply}, Req),
-    NewReq;
-
-do_response({SeqNo, false}, Reply, Req) ->
-    do_response(SeqNo, Reply, Req);
-do_response(SeqNo, Reply, Req) ->
-    case dict:find(SeqNo, Req) of
-        {ok, From} ->
-            gen_server:reply(From, Reply),
-            dict:erase(SeqNo, Req);
-        error ->
-            Req
-    end.
-
-do_multiple_response(SeqNo, From, {Remain, UpSeqNo, Reply}) ->
-    case SeqNo > UpSeqNo of
-        true ->
-            {dict:store(SeqNo, From, Remain), UpSeqNo, Reply};
-        false ->
-            gen_server:reply(From, Reply),
-            {Remain, UpSeqNo, Reply}
-    end.
+% do_response({SeqNo, true}, Reply, Req) ->
+%     %% 小于SeqNo的消息都已经确认
+%     {NewReq, _, _} = dict:fold(fun do_multiple_response/3, {dict:new(), SeqNo, Reply}, Req),
+%     NewReq;
+% 
+% do_response({SeqNo, false}, Reply, Req) ->
+%     do_response(SeqNo, Reply, Req);
+% do_response(SeqNo, Reply, Req) ->
+%     case dict:find(SeqNo, Req) of
+%         {ok, From} ->
+%             gen_server:reply(From, Reply),
+%             dict:erase(SeqNo, Req);
+%         error ->
+%             Req
+%     end.
+% 
+% do_multiple_response(SeqNo, From, {Remain, UpSeqNo, Reply}) ->
+%     case SeqNo > UpSeqNo of
+%         true ->
+%             {dict:store(SeqNo, From, Remain), UpSeqNo, Reply};
+%         false ->
+%             gen_server:reply(From, Reply),
+%             {Remain, UpSeqNo, Reply}
+%     end.
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
