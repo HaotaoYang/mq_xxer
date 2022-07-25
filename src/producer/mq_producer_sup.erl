@@ -5,23 +5,35 @@
 
 -module(mq_producer_sup).
 
+-include("mq_xxer_common.hrl").
+
 -behaviour(supervisor).
 
 %% API
--export([start_link/0]).
+-export([
+    start_link/0,
+    start_producers/0,
+    stop_producers/0
+]).
 
 %% Supervisor callbacks
 -export([init/1]).
-
--define(SERVER, ?MODULE).
 
 %%====================================================================
 %% API functions
 %%====================================================================
 
 start_link() ->
-    {ok, Pid} = supervisor:start_link({local, ?SERVER}, ?MODULE, []),
+    {ok, Pid} = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
     {ok, Pid}.
+
+start_producers() ->
+    [{ok, _P} = supervisor:start_child(mq_producer_sup, [N]) || N <- lists:seq(1, ?PRODUCER_NUM)],
+    ok.
+
+stop_producers() ->
+    [mq_producer:stop_producers(N) || N <- lists:seq(1, ?PRODUCER_NUM)],
+    ok.
 
 %%====================================================================
 %% Supervisor callbacks

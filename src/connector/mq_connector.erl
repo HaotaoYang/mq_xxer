@@ -1,16 +1,17 @@
 -module(mq_connector).
 
 -include("mq_xxer_common.hrl").
--include_lib("amqp_client/include/amqp_client.hrl").
 
 -record(state, {
     connection,
-    monitor_ref
+    monitor_ref,
+    mq_status = false
 }).
 
 -export([
     start_link/0,
-    get_connection/0
+    get_connection/0,
+    get_mq_status/0
 ]).
 
 -export([
@@ -32,18 +33,24 @@ start_link() ->
 get_connection() ->
     gen_server:call(?MODULE, get_connection).
 
+-spec get_mq_status() -> true | false.
+get_mq_status() ->
+    gen_server:call(?MODULE, get_mq_status).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 init(_) ->
     State = case catch start_mq_client() of
-        {Connection, Ref} -> #state{connection = Connection, monitor_ref = Ref};
+        {Connection, Ref} -> #state{connection = Connection, monitor_ref = Ref, mq_status = true};
         _ -> #state{}
     end,
     {ok, State}.
 
 handle_call(get_connection, _From, State) ->
     {reply, State#state.connection, State};
+handle_call(get_mq_status, _From, State) ->
+    {reply, State#state.mq_status, State};
 handle_call(_, _, State) ->
     {reply, ok, State}.
 
@@ -53,7 +60,7 @@ handle_cast(_, State) ->
 handle_info(tick, State) ->
     NewState = case catch start_mq_client() of
         {Connection, Ref} ->
-            State#state{connection = Connection, monitor_ref = Ref};
+            State#state{connection = Connection, monitor_ref = Ref, mq_status = true};
         _ ->
             erlang:send_after(1000, self(), tick),
             State
@@ -63,11 +70,11 @@ handle_info({'DOWN', Ref, process, Pid, _}, #state{connection = Pid, monitor_ref
     erlang:send_after(1000, self(), tick),
     {noreply, State};
 handle_info(Info, State) ->
-    io:format("~p:~p: [info] mq_connector process receive unknow info msg:~p~n", [?MODULE, ?LINE, Info]),
+    ?LOG_INFO("mq_connector process receive unknow info msg:~p", [Info]),
     {noreply, State}.
 
 terminate(Reason, _State) ->
-    io:format("~p:~p: [warning] mq_connector process terminate... reason:~p~n", [?MODULE, ?LINE, Reason]),
+    ?LOG_WARNING("mq_connector process terminate... reason:~p", [Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->

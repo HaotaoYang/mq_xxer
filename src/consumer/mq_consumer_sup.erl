@@ -8,20 +8,26 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0]).
+-export([
+    start_link/0,
+    start_consumers/0,
+    stop_consumers/0
+]).
 
 %% Supervisor callbacks
 -export([init/1]).
-
--define(SERVER, ?MODULE).
 
 %%====================================================================
 %% API functions
 %%====================================================================
 
 start_link() ->
-    {ok, Pid} = supervisor:start_link({local, ?SERVER}, ?MODULE, []),
+    {ok, Pid} = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
     {ok, Pid}.
+
+start_consumers() -> ok.
+
+stop_consumers() -> ok.
 
 %%====================================================================
 %% Supervisor callbacks
