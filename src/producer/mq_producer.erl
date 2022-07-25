@@ -71,7 +71,7 @@ state(Pid) ->
     sys:get_state(Pid).
 
 stop_publisher() ->
-    [ ok = stop(N) || N <- lists:seq(1, ?PRODUCER_NUM)],
+    [ok = stop(N) || N <- lists:seq(1, ?PRODUCER_NUM)],
     ok.
 
 get_publisher() ->
@@ -80,6 +80,7 @@ get_publisher() ->
 
 stop(N) ->
     gen_server:call(get_name(N), stop).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -214,23 +215,13 @@ handle_info({'DOWN', _, process, QPid, {shutdown,{server_initiated_close, 404, _
     #state{request = Req} = State) ->
     ?LOG_ERROR("NOF_FOUND pub_pid = ~p, channel_pid(~p) down, reason = ~p~n", [self(), QPid, Reason]),
     dict:fold(fun channel_down/3, ok, Req),
-    handle_info(re_init_channel, State);
+    start_init_channel_timer(),
+    {noreply, State};
 handle_info({'DOWN', _, process, QPid, Reason}, #state{request = Req} = State) ->
     ?LOG_ERROR("pub_pid = ~p, channel_pid(~p) down, reason = ~p~n", [self(), QPid, Reason]),
     dict:fold(fun channel_down/3, ok, Req),
-    handle_info(re_init_channel, State);
-handle_info(re_init_channel, State) ->
-    case catch init_channel(State) of
-        {ok, NewState} ->
-            {noreply, NewState};
-        _ ->
-            erlang:send_after(1000, self(), re_init_channel),
-            {noreply, State#state{
-                channel_ref = undefined,
-                channel = undefined,
-                request = dict:new(),
-                seqno = 0}}
-    end;
+    start_init_channel_timer(),
+    {noreply, State};
 handle_info(Info, State) ->
     ?LOG_WARNING("self = ~p, unknown info = ~p~n", [self(), Info]),
     {noreply, State}.
