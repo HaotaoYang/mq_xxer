@@ -23,7 +23,7 @@
     code_change/3
 ]).
 
--type publish_msg() :: {Exchange :: binary(), RoutingKey :: binary(), Payload :: binary()} | {#'basic.publish'{}, #amqp_msg{}}.
+-type publish_msg() :: {Exchange :: binary(), RoutingKey :: binary(), Payload :: binary()}.
 -type result() :: ack | nack | closing | blocked.
 
 -record(state, {
@@ -113,34 +113,32 @@ init([PName]) ->
     {stop, Reason :: term(), NewState :: #state{}}).
 handle_call({send, _}, _From, #state{channel = undefined} = NewState) ->
     {reply, closing, NewState};
-handle_call({send, {Exchange, RoutingKey, Payload}}, From, State) ->
+handle_call({send, {Exchange, RoutingKey, Payload} = Msg}, From, State) ->
+    #state{channel = Channel, seqno = SeqNo, request = Req} = State,
+    NewSeq = SeqNo + 1,
     BasicPublish = #'basic.publish'{
         mandatory = true,
         exchange = Exchange,
         routing_key = RoutingKey
     },
-    AmqpMsg =  #amqp_msg{
+    AmqpMsg = #amqp_msg{
         props = #'P_basic'{
             content_type = <<"application/octet-stream">>,
             timestamp = erlang:system_time(1000),
-            delivery_mode = 2
+            delivery_mode = 2,
+            message_id = erlang:integer_to_binary(NewSeq)
         },
         payload = Payload
     },
-    handle_call({send, {BasicPublish, AmqpMsg}}, From ,State);
-handle_call({send, {#'basic.publish'{} = Publish, #amqp_msg{props = Props} = AmqpMsg}}, From, State) ->
-    #state{channel = Channel, seqno = SeqNo, request = Req} = State,
-    NewSeq = SeqNo + 1,
-    NewProps = Props#'P_basic'{message_id = erlang:integer_to_binary(NewSeq)},
-    case catch amqp_channel:call(Channel, Publish, AmqpMsg#amqp_msg{props = NewProps}) of
+    case catch amqp_channel:call(Channel, BasicPublish, AmqpMsg) of
         ok ->
-            NewReq = Req ++ [{NewSeq, From}],
+            NewReq = Req ++ [{NewSeq, From, Msg}],
             {noreply, State#state{seqno = NewSeq, request = NewReq}};
         %% blocked or closing
         BlockedOrClosing ->
+            handle_confirm_msg(BlockedOrClosing, Msg),
             {reply, BlockedOrClosing, State}
     end;
-
 handle_call(stop, _, State) ->
     {stop, normal, ok, State};
 handle_call(_Request, _From, State) ->
@@ -190,22 +188,15 @@ handle_info(init_channel, State) ->
     end;
 %% @doc when no queue to binding this routingkey will callback
 handle_info({#'basic.return'{} = Return, #amqp_msg{props = #'P_basic'{message_id = SeqNo}}}, State) ->
-    #state{request = Req} = State,
-    ?LOG_ERROR("pub_pid = ~p, callback_return = ~p~n", [self(), Return]),
+    #state{name = Name,request = Req} = State,
+    ?LOG_ERROR("~p:~p: producer_name = ~p, callback_return = ~p~n", [?MODULE, ?LINE, Name, Return]),
     {noreply, State#state{request = do_response(erlang:binary_to_integer(SeqNo), nack, Req)}};
 handle_info(#'basic.ack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
     {noreply, State#state{request = do_response({SeqNo, Multiple}, ack, Req)}};
 handle_info(#'basic.nack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
     {noreply, State#state{request = do_response({SeqNo, Multiple}, nack, Req)}};
-%% @doc publish message to no exchange will receive down from channel
-handle_info({'DOWN', _, process, QPid, {shutdown, {server_initiated_close, 404, _}} = Reason}, State) ->
-    #state{request = Req} = State,
-    ?LOG_ERROR("NOF_FOUND pub_pid = ~p, channel_pid(~p) down, reason = ~p~n", [self(), QPid, Reason]),
-    do_channel_down(Req),
-    start_init_channel_timer(),
-    {noreply, State};
-handle_info({'DOWN', _, process, QPid, Reason}, #state{request = Req} = State) ->
-    ?LOG_ERROR("pub_pid = ~p, channel_pid(~p) down, reason = ~p~n", [self(), QPid, Reason]),
+handle_info({'DOWN', _, process, _ChannelPid, Reason}, #state{name = Name, request = Req} = State) ->
+    ?LOG_ERROR("~p:~p: producer_name = ~p down, reason = ~p~n", [?MODULE, ?LINE, Name, Reason]),
     do_channel_down(Req),
     start_init_channel_timer(),
     {noreply, State};
@@ -268,9 +259,10 @@ init_channel(State) ->
 do_response({SeqNo, true}, Reply, Req) ->
     %% 批量确认，小于等于SeqNo的消息都已经确认
     NewReq = lists:foldl(
-        fun({TempSeqNo, TempFrom}, TempReq) ->
+        fun({TempSeqNo, TempFrom, Msg}, TempReq) ->
             case TempSeqNo =< SeqNo of
                 true ->
+                    handle_confirm_msg(Reply, Msg),
                     gen_server:reply(TempFrom, Reply),
                     TempReq;
                 _ ->
@@ -285,7 +277,8 @@ do_response({SeqNo, false}, Reply, Req) ->
     do_response(SeqNo, Reply, Req);
 do_response(SeqNo, Reply, Req) ->
     case lists:keytake(SeqNo, 1, Req) of
-        {value, {SeqNo, From}, Other} ->
+        {value, {SeqNo, From, Msg}, Other} ->
+            handle_confirm_msg(Reply, Msg),
             gen_server:reply(From, Reply),
             Other;
         _ ->
@@ -293,4 +286,15 @@ do_response(SeqNo, Reply, Req) ->
     end.
 
 do_channel_down(Req) ->
-    [gen_server:reply(From, nack) || {_, From} <- Req].
+    [
+        begin
+            handle_confirm_msg(nack, Msg),
+            gen_server:reply(From, nack)
+        end || {_, From, Msg} <- Req
+    ].
+
+handle_confirm_msg(ack, _Msg) -> skip;
+handle_confirm_msg(Reply, Msg) ->
+    %% TODO handle_msg
+    ?LOG_WARNING("~p:~p: msg ~p confirm response:~p~n", [?MODULE, ?LINE, Msg, Reply]),
+    ok.
