@@ -6,3 +6,4 @@ RabbitMQ：
 - 查看状态：`sudo service rabbitmq-server status`
 - 开启web管理插件：`sudo rabbitmq-plugins enable rabbitmq_management`
 - 查看当前用户：`sudo rabbitmqctl list_users`
+- `rabbitmq_client`使用文档：`https://www.rabbitmq.com/erlang-client-user-guide.html`

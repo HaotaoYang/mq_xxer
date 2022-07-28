@@ -9,7 +9,7 @@
     start_link/1,
     get_name/1,
     state/1,
-    send/1,
+    publish/1,
     stop_producers/1
 ]).
 
@@ -57,15 +57,15 @@ get_name(N) ->
 state(PName) ->
     sys:get_state(PName).
 
--spec send(Msg :: publish_msg()) -> Result :: result().
-send(Msg) ->
+-spec publish(Msg :: publish_msg()) -> Result :: result().
+publish(Msg) ->
     N = rand:uniform(?PRODUCER_NUM),
     PName = get_name(N),
-    send(PName, Msg).
+    publish(PName, Msg).
 
--spec send(Name :: atom(), Msg :: publish_msg()) -> Result :: result().
-send(PName, Msg) ->
-    gen_server:call(PName, {send, Msg}, infinity).
+-spec publish(Name :: atom(), Msg :: publish_msg()) -> Result :: result().
+publish(PName, Msg) ->
+    gen_server:call(PName, {publish, Msg}, infinity).
 
 stop_producers(N) ->
     gen_server:call(get_name(N), stop).
@@ -111,9 +111,9 @@ init([PName]) ->
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_call({send, _}, _From, #state{channel = undefined} = NewState) ->
+handle_call({publish, _}, _From, #state{channel = undefined} = NewState) ->
     {reply, closing, NewState};
-handle_call({send, {Exchange, RoutingKey, Payload} = Msg}, From, State) ->
+handle_call({publish, {Exchange, RoutingKey, Payload} = Msg}, From, State) ->
     #state{channel = Channel, seqno = SeqNo, request = Req} = State,
     NewSeq = SeqNo + 1,
     BasicPublish = #'basic.publish'{
