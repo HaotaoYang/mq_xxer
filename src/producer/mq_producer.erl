@@ -117,15 +117,14 @@ handle_call({publish, {Exchange, RoutingKey, Payload} = Msg}, From, State) ->
     #state{channel = Channel, seqno = SeqNo, request = Req} = State,
     NewSeq = SeqNo + 1,
     BasicPublish = #'basic.publish'{
-        mandatory = true,
+        mandatory = true,   %% 消息不能路由到任何一个队列时(true:通过#'basic.return'返回给生产者 | false:消息将被丢弃)
         exchange = Exchange,
         routing_key = RoutingKey
     },
     AmqpMsg = #amqp_msg{
         props = #'P_basic'{
-            content_type = <<"application/octet-stream">>,
+            delivery_mode = 2,  %% 持久化参数(1:临时的 | 2:持久化的)
             timestamp = erlang:system_time(1000),
-            delivery_mode = 2,
             message_id = erlang:integer_to_binary(NewSeq)
         },
         payload = Payload
@@ -188,7 +187,7 @@ handle_info(init_channel, State) ->
     end;
 %% @doc when no queue to binding this routingkey will callback
 handle_info({#'basic.return'{} = Return, #amqp_msg{props = #'P_basic'{message_id = SeqNo}}}, State) ->
-    #state{name = Name,request = Req} = State,
+    #state{name = Name, request = Req} = State,
     ?LOG_ERROR("~p:~p: producer_name = ~p, callback_return = ~p~n", [?MODULE, ?LINE, Name, Return]),
     {noreply, State#state{request = do_response(erlang:binary_to_integer(SeqNo), nack, Req)}};
 handle_info(#'basic.ack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
@@ -247,9 +246,9 @@ init_channel(State) ->
     case mq_connector:get_connection() of
         ConnectionPid when is_pid(ConnectionPid) ->
             {ok, Channel} = amqp_connection:open_channel(ConnectionPid),
-            ok = amqp_channel:register_confirm_handler(Channel, self()),
+            #'confirm.select_ok'{} = amqp_channel:call(Channel, #'confirm.select'{}),   %% 启用发布确认
+            ok = amqp_channel:register_confirm_handler(Channel, self()),    %% (发布确认回调函数)异步确认方式
             ok = amqp_channel:register_return_handler(Channel, self()),
-            #'confirm.select_ok'{} = amqp_channel:call(Channel, #'confirm.select'{}),
             Ref = erlang:monitor(process, Channel),
             {ok, State#state{channel = Channel, channel_ref = Ref, seqno = 0, request = []}};
         _ ->
