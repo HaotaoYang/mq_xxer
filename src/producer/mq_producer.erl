@@ -65,7 +65,7 @@ publish(Msg) ->
 
 -spec publish(Name :: atom(), Msg :: publish_msg()) -> Result :: result().
 publish(PName, Msg) ->
-    gen_server:call(PName, {publish, Msg}, infinity).
+    gen_server:cast(PName, {publish, Msg}, infinity).
 
 stop_producers(N) ->
     gen_server:call(get_name(N), stop).
@@ -111,9 +111,25 @@ init([PName]) ->
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_call({publish, _}, _From, #state{channel = undefined} = NewState) ->
+handle_call(stop, _, State) ->
+    {stop, normal, ok, State};
+handle_call(_Request, _From, State) ->
+    {reply, unknown_proto, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling cast messages
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec(handle_cast(Request :: term(), State :: #state{}) ->
+    {noreply, NewState :: #state{}} |
+    {noreply, NewState :: #state{}, timeout() | hibernate} |
+    {stop, Reason :: term(), NewState :: #state{}}).
+handle_cast({publish, _}, #state{channel = undefined} = NewState) ->
     {reply, closing, NewState};
-handle_call({publish, {Exchange, RoutingKey, Payload} = Msg}, From, State) ->
+handle_cast({publish, {Exchange, RoutingKey, Payload} = Msg}, State) ->
     #state{channel = Channel, seqno = SeqNo, request = Req} = State,
     NewSeq = SeqNo + 1,
     BasicPublish = #'basic.publish'{
@@ -131,29 +147,13 @@ handle_call({publish, {Exchange, RoutingKey, Payload} = Msg}, From, State) ->
     },
     case catch amqp_channel:call(Channel, BasicPublish, AmqpMsg) of
         ok ->
-            NewReq = Req ++ [{NewSeq, From, Msg}],
+            NewReq = Req ++ [{NewSeq, Msg}],
             {noreply, State#state{seqno = NewSeq, request = NewReq}};
         %% blocked or closing
         BlockedOrClosing ->
             handle_confirm_msg(BlockedOrClosing, Msg),
-            {reply, BlockedOrClosing, State}
+            {noreply, State}
     end;
-handle_call(stop, _, State) ->
-    {stop, normal, ok, State};
-handle_call(_Request, _From, State) ->
-    {reply, unknown_proto, State}.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling cast messages
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec(handle_cast(Request :: term(), State :: #state{}) ->
-    {noreply, NewState :: #state{}} |
-    {noreply, NewState :: #state{}, timeout() | hibernate} |
-    {stop, Reason :: term(), NewState :: #state{}}).
 handle_cast(_Request, State) ->
     {noreply, State}.
 
@@ -189,11 +189,11 @@ handle_info(init_channel, State) ->
 handle_info({#'basic.return'{} = Return, #amqp_msg{props = #'P_basic'{message_id = SeqNo}}}, State) ->
     #state{name = Name, request = Req} = State,
     ?LOG_ERROR("~p:~p: producer_name = ~p, callback_return = ~p~n", [?MODULE, ?LINE, Name, Return]),
-    {noreply, State#state{request = do_response(erlang:binary_to_integer(SeqNo), nack, Req)}};
+    {noreply, State#state{request = handle_publish_confirm(erlang:binary_to_integer(SeqNo), nack, Req)}};
 handle_info(#'basic.ack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
-    {noreply, State#state{request = do_response({SeqNo, Multiple}, ack, Req)}};
+    {noreply, State#state{request = handle_publish_confirm({SeqNo, Multiple}, ack, Req)}};
 handle_info(#'basic.nack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
-    {noreply, State#state{request = do_response({SeqNo, Multiple}, nack, Req)}};
+    {noreply, State#state{request = handle_publish_confirm({SeqNo, Multiple}, nack, Req)}};
 handle_info({'DOWN', _, process, _ChannelPid, Reason}, #state{name = Name, request = Req} = State) ->
     ?LOG_ERROR("~p:~p: producer_name = ~p down, reason = ~p~n", [?MODULE, ?LINE, Name, Reason]),
     do_channel_down(Req),
@@ -255,42 +255,35 @@ init_channel(State) ->
             {error, get_connection_error}
     end.
 
-do_response({SeqNo, true}, Reply, Req) ->
+handle_publish_confirm({SeqNo, true}, Reply, Req) ->
     %% 批量确认，小于等于SeqNo的消息都已经确认
     NewReq = lists:foldl(
-        fun({TempSeqNo, TempFrom, Msg}, TempReq) ->
+        fun({TempSeqNo, Msg}, TempReq) ->
             case TempSeqNo =< SeqNo of
                 true ->
                     handle_confirm_msg(Reply, Msg),
-                    gen_server:reply(TempFrom, Reply),
                     TempReq;
                 _ ->
-                    TempReq ++ [{TempSeqNo, TempFrom}]
+                    TempReq ++ [{TempSeqNo, Msg}]
             end
         end,
         [],
         Req
     ),
     NewReq;
-do_response({SeqNo, false}, Reply, Req) ->
-    do_response(SeqNo, Reply, Req);
-do_response(SeqNo, Reply, Req) ->
+handle_publish_confirm({SeqNo, false}, Reply, Req) ->
+    handle_publish_confirm(SeqNo, Reply, Req);
+handle_publish_confirm(SeqNo, Reply, Req) ->
     case lists:keytake(SeqNo, 1, Req) of
-        {value, {SeqNo, From, Msg}, Other} ->
+        {value, {SeqNo, Msg}, Other} ->
             handle_confirm_msg(Reply, Msg),
-            gen_server:reply(From, Reply),
             Other;
         _ ->
             Req
     end.
 
 do_channel_down(Req) ->
-    [
-        begin
-            handle_confirm_msg(nack, Msg),
-            gen_server:reply(From, nack)
-        end || {_, From, Msg} <- Req
-    ].
+    [handle_confirm_msg(nack, Msg) || {_, Msg} <- Req].
 
 handle_confirm_msg(ack, _Msg) -> skip;
 handle_confirm_msg(Reply, Msg) ->
