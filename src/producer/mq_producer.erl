@@ -127,8 +127,9 @@ handle_call(_Request, _From, State) ->
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_cast({publish, _}, #state{channel = undefined} = NewState) ->
-    {reply, closing, NewState};
+handle_cast({publish, Msg}, #state{channel = undefined} = State) ->
+    handle_confirm_msg(closing, Msg),
+    {noreply, State};
 handle_cast({publish, {Exchange, RoutingKey, Payload} = Msg}, State) ->
     #state{channel = Channel, seqno = SeqNo, request = Req} = State,
     NewSeq = SeqNo + 1,
