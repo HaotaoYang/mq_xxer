@@ -5,12 +5,14 @@
 
 -module(mq_consumer_sup).
 
+-include("mq_xxer_common.hrl").
+
 -behaviour(supervisor).
 
 %% API
 -export([
     start_link/0,
-    start_consumers/0,
+    start_consumers/3,
     stop_consumers/0
 ]).
 
@@ -25,7 +27,9 @@ start_link() ->
     {ok, Pid} = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
     {ok, Pid}.
 
-start_consumers() -> ok.
+start_consumers(Queue, HandleMod, Opts) ->
+    [supervisor:start_child(mq_consumer_sup, [{Queue, HandleMod, Opts}]) || _N <- lists:seq(1, ?CONSUMER_NUM)],
+    ok.
 
 stop_consumers() -> ok.
 

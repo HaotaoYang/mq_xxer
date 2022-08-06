@@ -37,5 +37,4 @@ prep_start() ->
 
 post_start() ->
     mq_producer_sup:start_producers(),
-    mq_consumer_sup:start_consumers(),
     ok.

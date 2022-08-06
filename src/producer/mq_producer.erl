@@ -114,7 +114,7 @@ init([PName]) ->
 handle_call(stop, _, State) ->
     {stop, normal, ok, State};
 handle_call(_Request, _From, State) ->
-    {reply, unknown_proto, State}.
+    {reply, unknown_call_msg, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -195,13 +195,13 @@ handle_info(#'basic.ack'{delivery_tag = SeqNo, multiple = Multiple}, #state{requ
     {noreply, State#state{request = handle_publish_confirm({SeqNo, Multiple}, ack, Req)}};
 handle_info(#'basic.nack'{delivery_tag = SeqNo, multiple = Multiple}, #state{request = Req} = State) ->
     {noreply, State#state{request = handle_publish_confirm({SeqNo, Multiple}, nack, Req)}};
-handle_info({'DOWN', _, process, _ChannelPid, Reason}, #state{name = Name, request = Req} = State) ->
+handle_info({'DOWN', Ref, process, _ChannelPid, Reason}, #state{name = Name, channel_ref = Ref, request = Req} = State) ->
     ?LOG_ERROR("~p:~p: producer_name = ~p down, reason = ~p~n", [?MODULE, ?LINE, Name, Reason]),
     do_channel_down(Req),
     start_init_channel_timer(),
     {noreply, State};
 handle_info(Info, State) ->
-    ?LOG_WARNING("self = ~p, unknown info = ~p~n", [self(), Info]),
+    ?LOG_WARNING("~p:~p: unknown info = ~p~n", [?MODULE, ?LINE, Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -217,7 +217,8 @@ handle_info(Info, State) ->
 %%--------------------------------------------------------------------
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
     State :: #state{}) -> term()).
-terminate(_Reason, #state{channel = Channel, request = Req}) ->
+terminate(Reason, #state{name = Name, channel = Channel, request = Req}) ->
+    ?LOG_WARNING("~p:~p: producer process terminate... name = ~p, reason = ~p~n", [?MODULE, ?LINE, Name, Reason]),
     do_channel_down(Req),
     amqp_channel:unregister_confirm_handler(Channel),
     amqp_channel:close(Channel),
@@ -239,7 +240,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%%===================================================================
 %%% Internal functions
-%%===================================================================
+%%%===================================================================
 start_init_channel_timer() ->
     erlang:send_after(1000, self(), init_channel).
 

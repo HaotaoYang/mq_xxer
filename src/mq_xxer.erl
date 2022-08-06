@@ -11,7 +11,10 @@
     delete_queue/1,
 
     bind/3,
-    unbind/3
+    unbind/3,
+
+    start_consumers/2,
+    start_consumers/3
 ]).
 
 %%%===================================================================
@@ -33,11 +36,11 @@ declare_exchange(ExchangeName, ExchangeType, IsDurable) ->
                     amqp_channel:close(Channel),
                     ok;
                 _ ->
-                    ?LOG_ERROR("declare_exchange get_connection error~n"),
+                    ?LOG_ERROR("~p:~p: declare_exchange get_connection error~n", [?MODULE, ?LINE]),
                     error
             end;
         _ ->
-            ?LOG_ERROR("declare_exchange params error... params:~p~n", [{ExchangeName, ExchangeType, IsDurable}]),
+            ?LOG_ERROR("~p:~p: declare_exchange params error... params:~p~n", [?MODULE, ?LINE, {ExchangeName, ExchangeType, IsDurable}]),
             error
     end.
 
@@ -53,11 +56,11 @@ delete_exchange(ExchangeName) ->
                     amqp_channel:close(Channel),
                     ok;
                 _ ->
-                    ?LOG_ERROR("delete_exchange get_connection error~n"),
+                    ?LOG_ERROR("~p:~p: delete_exchange get_connection error~n", [?MODULE, ?LINE]),
                     error
             end;
         _ ->
-            ?LOG_ERROR("delete_exchange params error... params:~p~n", [{ExchangeName}]),
+            ?LOG_ERROR("~p:~p: delete_exchange params error... params:~p~n", [?MODULE, ?LINE, {ExchangeName}]),
             error
     end.
 
@@ -76,11 +79,11 @@ declare_queue(QueueName, IsDurable) ->
                     amqp_channel:close(Channel),
                     ok;
                 _ ->
-                    ?LOG_ERROR("declare_queue get_connection error~n"),
+                    ?LOG_ERROR("~p:~p: declare_queue get_connection error~n", [?MODULE, ?LINE]),
                     error
             end;
         _ ->
-            ?LOG_ERROR("declare_queue params error... params:~p~n", [{QueueName, IsDurable}]),
+            ?LOG_ERROR("~p:~p: declare_queue params error... params:~p~n", [?MODULE, ?LINE, {QueueName, IsDurable}]),
             error
     end.
 
@@ -94,7 +97,7 @@ declare_transient_queue() ->
             amqp_channel:close(Channel),
             {ok, QueueName};
         _ ->
-            ?LOG_ERROR("declare_queue get_connection error~n"),
+            ?LOG_ERROR("~p:~p: declare_queue get_connection error~n", [?MODULE, ?LINE]),
             error
     end.
 
@@ -110,11 +113,11 @@ delete_queue(QueueName) ->
                     amqp_channel:close(Channel),
                     ok;
                 _ ->
-                    ?LOG_ERROR("delete_queue get_connection error~n"),
+                    ?LOG_ERROR("~p:~p: delete_queue get_connection error~n", [?MODULE, ?LINE]),
                     error
             end;
         _ ->
-            ?LOG_ERROR("delete_queue params error... params:~p~n", [{QueueName}]),
+            ?LOG_ERROR("~p:~p: delete_queue params error... params:~p~n", [?MODULE, ?LINE, {QueueName}]),
             error
     end.
 
@@ -134,11 +137,11 @@ bind(QueueName, ExchangeName, RoutingKey) ->
                     amqp_channel:close(Channel),
                     ok;
                 _ ->
-                    ?LOG_ERROR("bind get_connection error~n"),
+                    ?LOG_ERROR("~p:~p: bind get_connection error~n", [?MODULE, ?LINE]),
                     error
             end;
         _ ->
-            ?LOG_ERROR("bind params error... params:~p~n", [{QueueName, ExchangeName, RoutingKey}]),
+            ?LOG_ERROR("~p:~p: bind params error... params:~p~n", [?MODULE, ?LINE, {QueueName, ExchangeName, RoutingKey}]),
             error
     end.
 
@@ -158,11 +161,24 @@ unbind(QueueName, ExchangeName, RoutingKey) ->
                     amqp_channel:close(Channel),
                     ok;
                 _ ->
-                    ?LOG_ERROR("unbind get_connection error~n"),
+                    ?LOG_ERROR("~p:~p: unbind get_connection error~n", [?MODULE, ?LINE]),
                     error
             end;
         _ ->
-            ?LOG_ERROR("unbind params error... params:~p~n", [{QueueName, ExchangeName, RoutingKey}]),
+            ?LOG_ERROR("~p:~p: unbind params error... params:~p~n", [?MODULE, ?LINE, {QueueName, ExchangeName, RoutingKey}]),
+            error
+    end.
+
+%% @doc 启动消费者订阅到队列
+start_consumers(Queue, HandleMod) ->
+    start_consumers(Queue, HandleMod, #{}).
+
+start_consumers(Queue, HandleMod, Opts) ->
+    case check_start_consumers_params(Queue, HandleMod, Opts) of
+        true ->
+            mq_consumer_sup:start_consumers(Queue, HandleMod, Opts);
+        _ ->
+            ?LOG_ERROR("~p:~p: start_consumers error... params:~p~n", [?MODULE, ?LINE, {Queue, HandleMod, Opts}]),
             error
     end.
 
@@ -181,3 +197,6 @@ check_delete_queue_params(QueueName) -> is_binary(QueueName).
 
 check_binding_params(QueueName, ExchangeName, RoutingKey) ->
     is_binary(QueueName) andalso is_binary(ExchangeName) andalso is_binary(RoutingKey).
+
+check_start_consumers_params(Queue, HandleMod, Opts) ->
+    is_binary(Queue) andalso is_atom(HandleMod) andalso is_map(Opts).
