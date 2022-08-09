@@ -14,8 +14,7 @@
 
 %% API
 -export([
-    start_link/1,
-    handle_msg/1
+    start_link/1
 ]).
 
 %% gen_server callbacks
@@ -50,10 +49,6 @@
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Args) ->
     gen_server:start_link(?MODULE, Args, []).
-
-handle_msg(Msg) ->
-    ?LOG_INFO("~p:~p：handle_msg... Msg = ~p~n", [?MODULE, ?LINE, Msg]),
-    ok.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -142,15 +137,21 @@ handle_info(init_channel, State) ->
             },
             {noreply, NewState}
     end;
-handle_info(#'basic.consume_ok'{} = Consume, #state{queue = Queue} = State) ->
+handle_info(#'basic.consume_ok'{}, State) ->
     %% 订阅队列成功返回
     {noreply, State};
 handle_info(#'basic.cancel_ok'{} = Cancel, #state{queue = Queue} = State) ->
     ?LOG_WARNING("~p:~p: queue = ~p, ~p~n", [?MODULE, ?LINE, Queue, Cancel]),
     {stop, normal, State};
-handle_info({#'basic.deliver'{delivery_tag = Tag}, Content}, State) ->
+handle_info({#'basic.deliver'{delivery_tag = Tag}, #amqp_msg{payload = Payload}}, State) ->
     #state{handle_mod = HandleMod, channel = Channel} = State,
-    HandleMod:handle_msg(Content),
+    case catch HandleMod:handle_msg(Payload) of
+        {'EXIT', {undef, _}} ->
+            ?LOG_WARNING("~p:~p undefined handle_mod = ~p and msg = ~p~n", [?MODULE, ?LINE, HandleMod, Payload]),
+            skip;
+        _ ->
+            skip
+    end,
     amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = Tag}),
     {noreply, State};
 handle_info({'DOWN', Ref, process, _, Reason}, #state{queue = Queue, channel_ref = Ref} = State) ->
