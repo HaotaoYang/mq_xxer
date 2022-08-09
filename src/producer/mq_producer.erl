@@ -65,7 +65,7 @@ publish(Msg) ->
 
 -spec publish(Name :: atom(), Msg :: publish_msg()) -> Result :: result().
 publish(PName, Msg) ->
-    gen_server:cast(PName, {publish, Msg}, infinity).
+    gen_server:cast(PName, {publish, Msg}).
 
 stop_producers(N) ->
     gen_server:call(get_name(N), stop).

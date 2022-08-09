@@ -14,7 +14,8 @@
 
 %% API
 -export([
-    start_link/1
+    start_link/1,
+    handle_msg/1
 ]).
 
 %% gen_server callbacks
@@ -49,6 +50,10 @@
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Args) ->
     gen_server:start_link(?MODULE, Args, []).
+
+handle_msg(Msg) ->
+    ?LOG_INFO("~p:~p：handle_msg... Msg = ~p~n", [?MODULE, ?LINE, Msg]),
+    ok.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -138,7 +143,7 @@ handle_info(init_channel, State) ->
             {noreply, NewState}
     end;
 handle_info(#'basic.consume_ok'{} = Consume, #state{queue = Queue} = State) ->
-    ?LOG_WARNING("~p:~p: queue = ~p, ~p~n", [?MODULE, ?LINE, Queue, Consume]),
+    %% 订阅队列成功返回
     {noreply, State};
 handle_info(#'basic.cancel_ok'{} = Cancel, #state{queue = Queue} = State) ->
     ?LOG_WARNING("~p:~p: queue = ~p, ~p~n", [?MODULE, ?LINE, Queue, Cancel]),
