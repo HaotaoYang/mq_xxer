@@ -143,9 +143,9 @@ handle_info(#'basic.consume_ok'{}, State) ->
 handle_info(#'basic.cancel_ok'{} = Cancel, #state{queue = Queue} = State) ->
     ?LOG_WARNING("~p:~p: queue = ~p, ~p~n", [?MODULE, ?LINE, Queue, Cancel]),
     {stop, normal, State};
-handle_info({#'basic.deliver'{delivery_tag = Tag}, #amqp_msg{payload = Payload}}, State) ->
+handle_info({#'basic.deliver'{delivery_tag = Tag} = Deliver, #amqp_msg{payload = Payload} = Content}, State) ->
     #state{handle_mod = HandleMod, channel = Channel} = State,
-    case catch HandleMod:handle_msg(Payload) of
+    case catch HandleMod:handle_msg(Deliver, Content, Payload) of
         {'EXIT', {undef, _}} ->
             ?LOG_WARNING("~p:~p undefined handle_mod = ~p and msg = ~p~n", [?MODULE, ?LINE, HandleMod, Payload]),
             skip;
